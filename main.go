@@ -9,7 +9,11 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"text/tabwriter"
 
 	"golang.org/x/net/html"
 )
@@ -21,19 +25,20 @@ type Link struct {
 	Error   error
 }
 
-func main() {
-	var website = flag.String("website", "http://localhost:8080", "the website to check")
-	flag.Parse()
+const LIMIT = 10
 
-	baseURL, err := url.Parse(*website)
-	if err != nil {
-		log.Fatal(err)
-	}
+func main() {
+	var uri = flag.String("uri", "http://localhost:8080", "the uri to scrape for links")
+	flag.Parse()
 
 	cache := make(map[string]Link)
 
-	var recurse func(Link)
-	recurse = func(link Link) {
+	var recurse func(url.URL, Link)
+
+	recurse = func(baseURL url.URL, link Link) {
+		if len(cache) > LIMIT {
+			return
+		}
 		var (
 			href = link.Href
 			body = link.Body
@@ -42,23 +47,41 @@ func main() {
 			c.Counter++
 			return
 		}
+		log.Println("found:", link.Href)
 		cache[href] = link
 
-		out := parser(*baseURL, bytes.NewBuffer(body), cache)
+		out := parser(baseURL, bytes.NewBuffer(body), cache)
+		var wg sync.WaitGroup
+		wg.Add(len(out))
 		for k, _ := range out {
-			recurse(fetch(k))
+			go func(uri string) {
+				defer wg.Done()
+				recurse(baseURL, fetch(uri))
+			}(k)
 		}
+		wg.Wait()
 	}
 
-	result := fetch(baseURL.String())
-	if result.Error != nil {
-		log.Fatal(result.Error)
+	baseURL, err := url.Parse(*uri)
+	if err != nil {
+		log.Fatal(err)
 	}
-	// cache[result.Href] = result
-	recurse(result)
+	recurse(*baseURL, increment(fetch(baseURL.String())))
+
+	format := "%s\t%s\t%v\n"
+	w := new(tabwriter.Writer)
+	w.Init(os.Stdout, 4, 4, 4, ' ', tabwriter.Debug)
+	fmt.Fprintf(w, format, "URL", "Frequency", "Success")
+	fmt.Fprintf(w, format, "---", "---", "---")
 	for _, v := range cache {
-		fmt.Printf("%s\t%d\t%v\n", v.Href, v.Counter, v.Error == nil)
+		fmt.Fprintf(w, format, v.Href, strconv.Itoa(v.Counter+1), v.Error == nil)
 	}
+	w.Flush()
+}
+
+func increment(link Link) Link {
+	link.Counter++
+	return link
 }
 
 func fetch(href string) Link {
@@ -82,9 +105,9 @@ func fetch(href string) Link {
 }
 
 func parser(root url.URL, r io.Reader, cache map[string]Link) map[string]int {
-	// Parse the html.
 	doc, err := html.Parse(r)
 	if err != nil {
+		log.Println(err)
 		return nil
 	}
 	links := make(map[string]int)
