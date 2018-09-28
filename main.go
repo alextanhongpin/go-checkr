@@ -43,6 +43,9 @@ func main() {
 			href = link.Href
 			body = link.Body
 		)
+		if len(href) == 0 || len(body) == 0 {
+			return
+		}
 		if c, found := cache[href]; found {
 			c.Counter++
 			return
@@ -68,15 +71,19 @@ func main() {
 	}
 	recurse(*baseURL, increment(fetch(baseURL.String())))
 
-	format := "%s\t%s\t%v\n"
-	w := new(tabwriter.Writer)
-	w.Init(os.Stdout, 4, 4, 4, ' ', tabwriter.Debug)
-	fmt.Fprintf(w, format, "URL", "Frequency", "Success")
-	fmt.Fprintf(w, format, "---", "---", "---")
-	for _, v := range cache {
-		fmt.Fprintf(w, format, v.Href, strconv.Itoa(v.Counter+1), v.Error == nil)
+	if len(cache) > 0 {
+		format := "%s\t%s\t%v\n"
+		w := new(tabwriter.Writer)
+		w.Init(os.Stdout, 4, 4, 4, ' ', tabwriter.Debug)
+		fmt.Fprintf(w, format, "URL", "Frequency", "Success")
+		fmt.Fprintf(w, format, "---", "---", "---")
+		for _, v := range cache {
+			fmt.Fprintf(w, format, v.Href, strconv.Itoa(v.Counter+1), v.Error == nil)
+		}
+		w.Flush()
+	} else {
+		log.Println("no results found")
 	}
-	w.Flush()
 }
 
 func increment(link Link) Link {
