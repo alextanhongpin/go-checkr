@@ -9,7 +9,7 @@ URL crawler to check url status in a webpage. Uses breadth-first search and runs
 $ go run server.go
 
 # Start the crawler.
-$ go run main.go
+$ go run checkr.go -uri "https://your.url.here" -limit 100
 ```
 
 Output:
