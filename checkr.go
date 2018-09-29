@@ -14,6 +14,12 @@ import (
 	"golang.org/x/net/html"
 )
 
+type Status struct {
+	Count int
+	Error error
+	Code  int
+}
+
 func main() {
 	uri := flag.String("uri", "http://localhost:8080", "the uri to scrape links")
 	limit := flag.Int("limit", 10, "the maximum number of links to traverse")
@@ -21,31 +27,32 @@ func main() {
 
 	m := traverse(*uri, *limit)
 	for k, v := range m {
-		log.Println(k, v)
+		log.Println(k, v.Error, v.Count, v.Code)
 	}
 }
 
-func fetch(href string) ([]byte, error) {
+func fetch(href string) ([]byte, int, error) {
 	if href == "" {
-		return nil, errors.New("cannot be empty")
+		return nil, -1, errors.New("cannot be empty")
 	}
 	_, err := url.Parse(href)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	resp, err := http.Get(href)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
+	code := resp.StatusCode
 	if err != nil {
-		return nil, err
+		return nil, code, err
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, code, err
 	}
-	return body, nil
+	return body, code, nil
 }
 
 func parser(root url.URL, r io.Reader) (result []string) {
@@ -82,25 +89,23 @@ func parser(root url.URL, r io.Reader) (result []string) {
 	return
 }
 
-func traverse(rootURL string, limit int) map[string]int {
+func traverse(rootURL string, limit int) map[string]*Status {
 	baseURL, err := url.Parse(rootURL)
 	if err != nil {
 		log.Fatal(err)
 	}
 	children := []string{rootURL}
-	cache := make(map[string]int)
+	cache := make(map[string]*Status)
 	for (len(children)) > 0 && len(cache) < limit {
 		item := children[0]
 		children = children[1:]
-		if _, found := cache[item]; found {
-			cache[item]++
+		if c, found := cache[item]; found {
+			c.Count++
 			continue
 		}
-		cache[item]++
-
-		body, err := fetch(item)
+		body, status, err := fetch(item)
+		cache[item] = &Status{Count: 1, Error: err, Code: status}
 		if err != nil {
-			log.Println(err)
 			continue
 		}
 		links := parser(*baseURL, bytes.NewBuffer(body))
