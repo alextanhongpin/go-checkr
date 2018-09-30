@@ -21,30 +21,36 @@ type Status struct {
 }
 
 func main() {
-	uri := flag.String("uri", "http://localhost:8080", "the uri to scrape links")
-	limit := flag.Int("limit", 10, "the maximum number of links to traverse")
+	var (
+		uri   = flag.String("uri", "http://localhost:8080", "the uri to scrape links")
+		limit = flag.Int("limit", 10, "the maximum number of links to traverse")
+	)
 	flag.Parse()
 
 	m := traverse(*uri, *limit)
+	if len(m) == 0 {
+		log.Println("no results")
+		return
+	}
 	for k, v := range m {
-		log.Println(k, v.Error, v.Count, v.Code)
+		log.Println(k, v.Code, v.Error, v.Code)
 	}
 }
 
 func fetch(href string) ([]byte, int, error) {
+	code := -1
 	if href == "" {
-		return nil, -1, errors.New("cannot be empty")
+		return nil, code, errors.New("cannot be empty")
 	}
 	_, err := url.Parse(href)
 	if err != nil {
-		return nil, -1, err
+		return nil, code, err
 	}
-
 	resp, err := http.Get(href)
 	if resp != nil {
+		code = resp.StatusCode
 		defer resp.Body.Close()
 	}
-	code := resp.StatusCode
 	if err != nil {
 		return nil, code, err
 	}
@@ -55,29 +61,21 @@ func fetch(href string) ([]byte, int, error) {
 	return body, code, nil
 }
 
-func parser(root url.URL, r io.Reader) (result []string) {
+func parser(r io.Reader) (result []string) {
 	doc, err := html.Parse(r)
-	if err != nil {
+	if err != nil || doc == nil {
 		log.Println(err)
 		return nil
 	}
 	var f func(*html.Node)
 	f = func(n *html.Node) {
+		if n == nil {
+			return
+		}
 		if n.Type == html.ElementNode && n.Data == "a" {
 			for _, a := range n.Attr {
-				if a.Key == "href" {
-					href := a.Val
-					// Most likely a relative path.
-					if !strings.HasPrefix(href, "http") {
-						root.Path = href
-						href = root.String()
-					}
-					parsed, err := url.PathUnescape(href)
-					if err != nil {
-						log.Println(err)
-						continue
-					}
-					result = append(result, parsed)
+				if a.Key == "href" && len(a.Val) > 0 {
+					result = append(result, a.Val)
 				}
 			}
 		}
@@ -103,13 +101,38 @@ func traverse(rootURL string, limit int) map[string]*Status {
 			c.Count++
 			continue
 		}
+		log.Println("fetching", item)
 		body, status, err := fetch(item)
 		cache[item] = &Status{Count: 1, Error: err, Code: status}
-		if err != nil {
+		if err != nil || body == nil || status != 200 {
 			continue
 		}
-		links := parser(*baseURL, bytes.NewBuffer(body))
+		links := parser(bytes.NewBuffer(body))
+
+		if len(links) == 0 {
+			continue
+		}
+
+		for k, v := range links {
+			absURL := mapRelativeURL(*baseURL, v)
+			parsed, err := url.PathUnescape(absURL)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			links[k] = parsed
+		}
 		children = append(children, links...)
 	}
 	return cache
+}
+
+func mapRelativeURL(root url.URL, path string) string {
+	// Most likely a relative path.
+	if !strings.HasPrefix(path, "http") {
+		root.Path = path
+		return root.String()
+
+	}
+	return path
 }
